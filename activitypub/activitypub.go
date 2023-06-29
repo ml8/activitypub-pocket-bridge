@@ -125,14 +125,8 @@ func (p *activitypub) ActorHandler(w http.ResponseWriter, r *http.Request) {
 		util.ErrorResponse(w, http.StatusNotFound, "")
 		return
 	}
-	actor := Actor{
-		ID:       p.userBaseUrl(name),
-		Type:     "Person",
-		Inbox:    p.userFeatureUrl("inbox", name),
-		Outbox:   p.userFeatureUrl("outbox", name),
-		Approves: false,
-	}
-	wrapped := WrapActor(&actor)
+	actor := p.actorForUser(name)
+	wrapped := WrapActor(actor)
 	glog.Infof("ActorResponse: %v", wrapped)
 	util.JsonResponse(w, http.StatusOK, wrapped)
 }
