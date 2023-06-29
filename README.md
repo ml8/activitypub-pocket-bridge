@@ -11,8 +11,8 @@ Hacking/learning ActivityPub and Pocket APIs...
 
 __So far:__
 
-* a golang library for authenticating and retrieving pocket saves an
-  implementation of webfinger
+* a golang library for authenticating and retrieving pocket saves 
+* an implementation of webfinger
   ([required](https://docs.joinmastodon.org/spec/webfinger/) by mastodon
   integration) for the service
 * the [actor](https://www.w3.org/TR/activitypub/#actor-objects) object
