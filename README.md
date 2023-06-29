@@ -23,7 +23,7 @@ __Next steps are to:__
 * implement the [follow
   activity](https://www.w3.org/TR/activitypub/#follow-activity-inbox) (mastodon
   <-> pocket-activitypub-service.social)
-  post saves to the follower
+* post saves to followers
   ([delivery](https://www.w3.org/TR/activitypub/#delivery))
 * figure out whatever else I need to do for mastodon to work ok with my
   cobbled-together code
