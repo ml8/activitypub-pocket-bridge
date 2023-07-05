@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/golang/glog"
 	"github.com/gorilla/mux"
@@ -111,6 +112,50 @@ func (p *pocket) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirect, 301)
 }
 
+func (p *pocket) GetToken(w http.ResponseWriter, user *Userdata) *AuthResponse {
+	// User is authenticated; get the token for them.
+	authReq := AuthRequest{
+		ConsumerKey: p.AppKey,
+		Code:        user.AuthCode,
+	}
+
+	jsonData, err := json.Marshal(authReq)
+	if err != nil {
+		util.ErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Error marshalling request: %v", err))
+		return nil
+	}
+	req, err := http.NewRequest("POST", PocketUrl+PocketAuthAuthorizeUrl, bytes.NewBuffer(jsonData))
+	if err != nil {
+		util.ErrorResponse(w, http.StatusInternalServerError, err.Error())
+		return nil
+	}
+	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
+	req.Header.Set("X-Accept", "application/json")
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		util.ErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Error sending %v: %v", req, err))
+		return nil
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		util.ErrorResponse(w, http.StatusInternalServerError, err.Error())
+		return nil
+	}
+	glog.Infof("Got %+v: %v", resp, body)
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	authResp := &AuthResponse{}
+	if err = json.Unmarshal(body, authResp); err != nil {
+		util.ErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Error unmarshalling %v: %v", string(body), err))
+		return nil
+	}
+	return authResp
+}
+
 func (p *pocket) RegisterCallback(w http.ResponseWriter, r *http.Request) {
 	acct := mux.Vars(r)["account"]
 	glog.Infof("Authorizing %v", acct)
@@ -127,41 +172,15 @@ func (p *pocket) RegisterCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// User is authenticated; get the token for them.
-	authReq := AuthRequest{
-		ConsumerKey: p.AppKey,
-		Code:        user.AuthCode,
+	authResp := p.GetToken(w, &user)
+	backOff := time.Second * 1
+	for i := 0; authResp == nil && i < 5; i += 1 {
+		glog.Warningf("Got non-OK status, backing off for %vs", backOff.Seconds())
+		time.Sleep(backOff)
+		authResp = p.GetToken(w, &user)
 	}
-
-	jsonData, err := json.Marshal(authReq)
-	if err != nil {
-		util.ErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Error marshalling request: %v", err))
-		return
-	}
-	req, err := http.NewRequest("POST", PocketUrl+PocketAuthAuthorizeUrl, bytes.NewBuffer(jsonData))
-	if err != nil {
-		util.ErrorResponse(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
-	req.Header.Set("X-Accept", "application/json")
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		util.ErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Error sending %v: %v", req, err))
-		return
-	}
-	defer resp.Body.Close()
-
-	glog.Infof("Got %v", resp)
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		util.ErrorResponse(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	authResp := &AuthResponse{}
-	if err = json.Unmarshal(body, authResp); err != nil {
-		util.ErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Error unmarshalling %v: %v", string(body), err))
+	if authResp == nil {
+		util.ErrorResponse(w, http.StatusInternalServerError, "Error retrieving user token")
 		return
 	}
 
