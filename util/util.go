@@ -8,12 +8,18 @@ import (
 )
 
 func ErrorResponse(w http.ResponseWriter, code int, message string) {
-	glog.Errorf("%v", message)
+	if message != "" {
+		glog.Errorf("%v", message)
+	}
 	JsonResponse(w, code, map[string]string{"error": message})
 }
 
 func JsonResponse(w http.ResponseWriter, code int, payload interface{}) {
-	response, err := json.Marshal(payload)
+	JsonResponseCustom(w, code, payload, json.Marshal)
+}
+
+func JsonResponseCustom(w http.ResponseWriter, code int, payload interface{}, marshaler func(v any) ([]byte, error)) {
+	response, err := marshaler(payload)
 	if err != nil {
 		glog.Fatalf("Error marshalling response %v: %v", payload, err)
 	}

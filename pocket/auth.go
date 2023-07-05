@@ -32,6 +32,17 @@ type AuthResponse struct {
 	Username    string `json:"username"`
 }
 
+const (
+	successSrc = `
+<html>
+	<head></head>
+	<body>
+	  Now, you may follow %v@%v from your mastodon (etc) account.
+	</body>
+</html>
+`
+)
+
 func (p *pocket) redirectUrl(token, uri string) string {
 	u, _ := url.Parse(PocketUrl + "/auth/authorize")
 	q := u.Query()
@@ -52,14 +63,13 @@ func (p *pocket) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	// Create + send auth request
 	authReq := PreAuthRequest{
 		ConsumerKey: p.AppKey,
-		RedirectUri: p.AppUrl + CallbackUrlRoot + "/" + acct,
+		RedirectUri: p.Resources.AppUrl + CallbackUrlRoot + "/" + acct,
 	}
 	jsonData, err := json.Marshal(authReq)
 	if err != nil {
 		util.ErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Error marshalling request: %v", err))
 		return
 	}
-	glog.Infof("marshalled json request: %v", string(jsonData))
 	req, err := http.NewRequest("POST", PocketUrl+PocketAuthRequestUrl, bytes.NewBuffer(jsonData))
 	if err != nil {
 		util.ErrorResponse(w, http.StatusInternalServerError, err.Error())
@@ -70,36 +80,35 @@ func (p *pocket) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		glog.Errorf("Error posting login request: %v", err)
 		util.ErrorResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
-	glog.Infof("body %v", string(body))
 	if err != nil {
 		util.ErrorResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	authResp := &PreAuthResponse{}
 	if err = json.Unmarshal(body, authResp); err != nil {
-		glog.Errorf("Error unmarshalling %v: %v", string(body), err)
-		util.ErrorResponse(w, http.StatusInternalServerError, err.Error())
+		msg := fmt.Sprintf("Error unmarshalling %v: %v", string(body), err)
+		util.ErrorResponse(w, http.StatusInternalServerError, msg)
 		return
 	}
 	glog.Infof("Got code %v for user %v", authResp.Code, acct)
 
-	p.Tokens[acct] = &Userdata{
+	p.Lock()
+	p.Tokens[acct] = Userdata{
 		Username:    acct,
 		AccessToken: "",
 		AuthCode:    authResp.Code,
 	}
+	p.Unlock()
 
 	// Redirect user to pocket auth
 	redirect := p.redirectUrl(authResp.Code, authReq.RedirectUri)
-	glog.Infof("Redirecting to %v", redirect)
-	http.Redirect(w, r, redirect, http.StatusOK)
+	http.Redirect(w, r, redirect, 301)
 }
 
 func (p *pocket) RegisterCallback(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +118,10 @@ func (p *pocket) RegisterCallback(w http.ResponseWriter, r *http.Request) {
 		util.ErrorResponse(w, http.StatusPreconditionFailed, "No user found")
 		return
 	}
+
+	p.Lock()
 	user, ok := p.Tokens[acct]
+	p.Unlock()
 	if !ok {
 		util.ErrorResponse(w, http.StatusPreconditionFailed, fmt.Sprintf("Unknown user %v", acct))
 		return
@@ -126,7 +138,6 @@ func (p *pocket) RegisterCallback(w http.ResponseWriter, r *http.Request) {
 		util.ErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Error marshalling request: %v", err))
 		return
 	}
-	glog.Infof("Sending %v", string(jsonData))
 	req, err := http.NewRequest("POST", PocketUrl+PocketAuthAuthorizeUrl, bytes.NewBuffer(jsonData))
 	if err != nil {
 		util.ErrorResponse(w, http.StatusInternalServerError, err.Error())
@@ -137,8 +148,7 @@ func (p *pocket) RegisterCallback(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		glog.Errorf("Error sending %v: %v", req, err)
-		util.ErrorResponse(w, http.StatusInternalServerError, err.Error())
+		util.ErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Error sending %v: %v", req, err))
 		return
 	}
 	defer resp.Body.Close()
@@ -151,13 +161,17 @@ func (p *pocket) RegisterCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	authResp := &AuthResponse{}
 	if err = json.Unmarshal(body, authResp); err != nil {
-		glog.Errorf("Error unmarshalling %v: %v", string(body), err)
-		util.ErrorResponse(w, http.StatusInternalServerError, err.Error())
+		util.ErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Error unmarshalling %v: %v", string(body), err))
 		return
 	}
 
 	// sweet.
+	p.Lock()
+	user, _ = p.Tokens[acct]
 	user.AccessToken = authResp.AccessToken
+	p.Tokens[acct] = user
+	p.Persist()
+	p.Unlock()
 	glog.Infof("Got token %v for user %v", authResp.AccessToken, acct)
-	util.JsonResponse(w, http.StatusOK, "")
+	w.Write([]byte(fmt.Sprintf(successSrc, acct, p.Resources.Host)))
 }

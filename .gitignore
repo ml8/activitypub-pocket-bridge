@@ -1,2 +1,5 @@
 ap-bot*
 *.priv
+*.pub
+*.json
+.env

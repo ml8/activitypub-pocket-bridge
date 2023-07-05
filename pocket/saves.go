@@ -62,38 +62,34 @@ func (p *pocket) getQuery(u *Userdata) (q []byte, err error) {
 
 func (p *pocket) ArticleHandler(w http.ResponseWriter, r *http.Request) {
 	user := mux.Vars(r)["account"]
-	glog.Infof("Getting random article for %v", user)
 	a, err := p.RandArticleForUser(user)
 	if err != nil {
-		msg := fmt.Sprintf("Error retrieving article for user %v: %v", user, err)
-		glog.Error(msg)
-		util.ErrorResponse(w, http.StatusInternalServerError, msg)
+		util.ErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Error retrieving article for user %v: %v", user, err))
 		return
 	}
 	util.JsonResponse(w, http.StatusOK, a)
 }
 
 func (p *pocket) RandArticleForUser(user string) (a Article, err error) {
+	p.Lock()
 	u, ok := p.Tokens[user]
+	p.Unlock()
 	if !ok {
-		msg := fmt.Sprintf("No user %v", user)
-		err = errors.New(msg)
+		err = errors.New(fmt.Sprintf("No user %v", user))
 		return
 	}
 	if u.AccessToken == "" {
-		msg := fmt.Sprintf("User %v not authenticated", user)
-		err = errors.New(msg)
+		err = errors.New(fmt.Sprintf("User %v not authenticated", user))
 		return
 	}
 
 	// Get user articles
 	var q []byte
-	q, err = p.getQuery(u)
+	q, err = p.getQuery(&u)
 	if err != nil {
 		glog.Errorf("Error marshalling json for %v: %v", u, err)
 		return
 	}
-	glog.Infof("query for %v: %v", user, string(q))
 	req, err := http.NewRequest("POST", PocketUrl+GetUrl, bytes.NewBuffer(q))
 	if err != nil {
 		glog.Errorf("Error creating query for %v: %v", user, err)
@@ -110,7 +106,6 @@ func (p *pocket) RandArticleForUser(user string) (a Article, err error) {
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
-	glog.Infof("body %v", string(body))
 	if err != nil {
 		return
 	}
@@ -122,11 +117,10 @@ func (p *pocket) RandArticleForUser(user string) (a Article, err error) {
 	}
 
 	// Choose random article
-	glog.Infof("Got %v articles", len(get.Items))
 	i := rand.Intn(len(get.Items))
 	keys := reflect.ValueOf(get.Items).MapKeys()
 	art := get.Items[keys[i].String()]
-	glog.Infof("chose article %v", art)
+	glog.Infof("Got %v articles; chose %v: %v", len(get.Items), i, art)
 	a = Article{
 		Title:   art.ResolvedTitle,
 		Excerpt: art.Excerpt,
